@@ -16,6 +16,7 @@ from .config import (
     CollectorConfig,
 )
 from .exchanges import SUPPORTED_EXCHANGES
+from .gui import run_gui
 from .pipeline import BackfillOptions, CollectorService
 from .services.synthetic_seconds import GenerateSecondsOptions, SyntheticSecondService
 from .shard_manager import ShardBackfillOptions, ShardManager
@@ -137,6 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
     generate_1s.add_argument("--end", help="End time.")
     generate_1s.add_argument("--seed", type=int, default=42, help="Deterministic Brownian generator seed.")
 
+    gui = subparsers.add_parser("gui", help="Start the local browser GUI.")
+    gui.add_argument("--host", default="127.0.0.1", help="GUI host.")
+    gui.add_argument("--port", type=positive_int, default=8765, help="GUI port.")
+    gui.add_argument("--no-open", action="store_true", help="Do not open the browser automatically.")
+
     subparsers.add_parser("stats", help="Print table row counts.")
     return parser
 
@@ -228,6 +234,10 @@ def main() -> int:
             return 0
         finally:
             service.close()
+
+    if args.command == "gui":
+        run_gui(host=args.host, port=args.port, open_browser=not args.no_open)
+        return 0
 
     return 1
 

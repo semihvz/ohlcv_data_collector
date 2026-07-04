@@ -20,6 +20,29 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
+## GUI
+
+Start the local browser GUI:
+
+```powershell
+python -m rr_data_collector.cli gui
+```
+
+The GUI supports:
+
+- exchange selection,
+- listing all USDT perpetual symbols for the selected exchange,
+- downloading the first N symbols,
+- downloading selected symbols,
+- stopping an active download job,
+- downloading with N network workers while keeping DuckDB writes serialized.
+
+Run without opening the browser automatically:
+
+```powershell
+python -m rr_data_collector.cli gui --no-open --port 8765
+```
+
 ## Storage
 
 Default DB:

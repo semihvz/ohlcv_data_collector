@@ -34,6 +34,7 @@ The GUI supports:
 - listing all USDT perpetual symbols for the selected exchange,
 - downloading the first N symbols,
 - downloading selected symbols,
+- showing newly downloaded candles live,
 - stopping an active download job,
 - downloading with N network workers while keeping DuckDB writes serialized.
 

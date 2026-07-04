@@ -24,6 +24,7 @@ class GuiJobManager:
         self.thread: threading.Thread | None = None
         self.status: dict[str, Any] = self._idle_status()
         self.logs: list[str] = []
+        self.recent_candles: list[dict[str, Any]] = []
 
     def _idle_status(self) -> dict[str, Any]:
         return {
@@ -59,6 +60,7 @@ class GuiJobManager:
                 raise RuntimeError("A download job is already running.")
             self.stop_event.clear()
             self.logs = []
+            self.recent_candles = []
             self.status = self._idle_status()
             self.status.update(
                 {
@@ -86,7 +88,11 @@ class GuiJobManager:
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
-            return {"status": dict(self.status), "logs": list(self.logs[-300:])}
+            return {
+                "status": dict(self.status),
+                "logs": list(self.logs[-300:]),
+                "recent_candles": list(self.recent_candles[-200:]),
+            }
 
     def _set_status(self, **updates: Any) -> None:
         with self.lock:
@@ -98,6 +104,27 @@ class GuiJobManager:
             self.logs.append(stamped)
             if len(self.logs) > 1000:
                 self.logs = self.logs[-1000:]
+
+    def _record_candles(self, symbol: str, rows: list[Any]) -> None:
+        if not rows:
+            return
+        entries = [
+            {
+                "symbol": symbol,
+                "open_time": iso_from_ms(row.open_time_ms),
+                "open": str(row.open),
+                "high": str(row.high),
+                "low": str(row.low),
+                "close": str(row.close),
+                "volume": str(row.volume),
+                "quote_volume": str(row.quote_volume),
+            }
+            for row in rows
+        ]
+        with self.lock:
+            self.recent_candles.extend(entries)
+            if len(self.recent_candles) > 500:
+                self.recent_candles = self.recent_candles[-500:]
 
     def _finish(self, message: str) -> None:
         with self.lock:
@@ -261,6 +288,7 @@ class GuiJobManager:
                 if event["type"] == "page":
                     rows = event["rows"]
                     inserted = service.db.insert_candles(service.config.exchange, symbol, rows)
+                    self._record_candles(symbol, rows[-20:])
                     self._set_status(current=symbol)
                     self._log(
                         f"{symbol} inserted={inserted} "
@@ -496,6 +524,45 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       white-space: pre-wrap;
     }
+    .live-wrap {
+      max-height: 300px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+      margin-bottom: 16px;
+    }
+    .live-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+    .live-table th,
+    .live-table td {
+      border-bottom: 1px solid #eee8d8;
+      padding: 7px 8px;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .live-table th {
+      position: sticky;
+      top: 0;
+      background: #f8f5ea;
+      color: var(--muted);
+      z-index: 1;
+    }
+    .live-table th:first-child,
+    .live-table td:first-child,
+    .live-table th:nth-child(2),
+    .live-table td:nth-child(2) {
+      text-align: left;
+    }
+    .empty-live {
+      color: var(--muted);
+      padding: 12px;
+      font-size: 13px;
+    }
     .status { color: var(--muted); margin: 4px 0 12px; }
     .mode { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
     .mode label {
@@ -558,6 +625,25 @@ INDEX_HTML = r"""<!doctype html>
         <span class="status" id="selectedCount">0 secili</span>
       </div>
       <div class="symbols" id="symbols"></div>
+      <h2 style="margin-top:16px">Canli Mum Akisi</h2>
+      <div class="live-wrap">
+        <table class="live-table">
+          <thead>
+            <tr>
+              <th>Sembol</th>
+              <th>Zaman</th>
+              <th>Open</th>
+              <th>High</th>
+              <th>Low</th>
+              <th>Close</th>
+              <th>Volume</th>
+            </tr>
+          </thead>
+          <tbody id="recentCandles">
+            <tr><td colspan="7"><div class="empty-live">Henuz veri yok</div></td></tr>
+          </tbody>
+        </table>
+      </div>
       <h2 style="margin-top:16px">Islem Gunlugu</h2>
       <div class="log" id="log"></div>
     </section>
@@ -609,6 +695,32 @@ function updateSelectedCount() {
   $('selectedCount').textContent = `${selected.size} secili`;
 }
 
+function renderRecentCandles(rows) {
+  const body = $('recentCandles');
+  body.innerHTML = '';
+  if (!rows.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 7;
+    const div = document.createElement('div');
+    div.className = 'empty-live';
+    div.textContent = 'Henuz veri yok';
+    td.appendChild(div);
+    tr.appendChild(td);
+    body.appendChild(tr);
+    return;
+  }
+  for (const item of rows.slice().reverse().slice(0, 80)) {
+    const tr = document.createElement('tr');
+    for (const key of ['symbol', 'open_time', 'open', 'high', 'low', 'close', 'volume']) {
+      const td = document.createElement('td');
+      td.textContent = item[key] ?? '';
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
+
 function payload() {
   const mode = document.querySelector('input[name="mode"]:checked').value;
   return {
@@ -633,6 +745,7 @@ async function refreshStatus() {
   $('mDownloaded').textContent = s.downloaded || 0;
   $('mRebuilt').textContent = s.rebuilt || 0;
   $('mFailed').textContent = s.failed || 0;
+  renderRecentCandles(data.recent_candles || []);
   $('log').textContent = (data.logs || []).join('\n');
   $('log').scrollTop = $('log').scrollHeight;
   $('startJob').disabled = !!s.running;
